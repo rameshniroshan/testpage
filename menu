@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Restaurant Menu</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Crimson+Pro:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+:root{
+  --cr:#7b2d26;--cr2:#4e1510;--cr3:#9e3d34;
+  --gd:#c9a84c;--gd2:#e8c97a;--gd3:#9a7828;
+  --cream:#faf6ee;--cream2:#f0e8d8;
+  --ink:#1c1008;--smoke:#7a6654;--pg:#fdfaf3;
+}
+html,body{width:100%;height:100%;overflow:hidden;touch-action:none;}
+body{
+  font-family:'Crimson Pro',Georgia,serif;
+  background:#0e0b08;
+  background-image:radial-gradient(ellipse 120% 60% at 50% 0%,#2a1208 0%,transparent 65%);
+  display:flex;align-items:center;justify-content:center;min-height:100vh;
+}
+
+/* ── SHELL ─────────────────────────────── */
+.shell{
+  width:100%;max-width:420px;
+  height:100dvh;max-height:780px;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  gap:12px;padding:10px 8px;
+}
+
+/* ── BOOK CONTAINER ─────────────────────── */
+/*
+  Left edge = spine (thick, dark)
+  Pages peel from right → left, rotating around the LEFT edge.
+  transform-origin for the flip panel = left center (or left bottom for corner peel).
+*/
+.book{
+  position:relative;
+  width:100%;flex:1;max-height:680px;
+  /* spine on the left */
+  border-radius:2px 12px 12px 2px;
+  overflow:hidden;
+  background:#111;
+  box-shadow:
+    /* spine bars */
+    -4px 0 0 #3a2010,
+    -8px 0 0 #241508,
+    -11px 0 0 #120a04,
+    /* drop shadow */
+    8px 6px 40px rgba(0,0,0,.85),
+    0 20px 60px rgba(0,0,0,.6);
+  cursor:default;
+}
+
+/* ── STATIC PAGES ──────────────────────── */
+/* All pages stacked; JS sets z-index & display */
+.page{
+  position:absolute;inset:0;
+  background:var(--pg);
+  overflow:hidden;
+  /* Each page is full-size, spine on left */
+}
+/* Paper texture lines */
+.page::before{
+  content:'';position:absolute;inset:0;z-index:0;pointer-events:none;
+  background:repeating-linear-gradient(
+    0deg,transparent,transparent 28px,
+    rgba(0,0,0,.025) 28px,rgba(0,0,0,.025) 29px
+  );
+}
+/* Spine shadow on every page */
+.page::after{
+  content:'';position:absolute;
+  top:0;left:0;width:32px;height:100%;
+  background:linear-gradient(to right,rgba(0,0,0,.22) 0%,transparent 100%);
+  z-index:5;pointer-events:none;
+}
+
+.pscroll{
+  position:relative;z-index:1;
+  height:100%;
+  overflow-y:auto;overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
+  scrollbar-width:none;
+}
+.pscroll::-webkit-scrollbar{display:none;}
+
+/* ═══════════════════════════════════════════
+   FLIP PANEL
+   
+   This is THE key insight:
+   • transform-origin: LEFT CENTER  (the spine is on the left)
+   • Rotating from 0 → -180deg sweeps the page to the left,
+     revealing the page underneath — just like a real book.
+   • The "back face" of the flip panel shows the NEXT page
+     (mirrored), revealed as the flip crosses 90°.
+═══════════════════════════════════════════ */
+#flipPanel{
+  position:absolute;inset:0;
+  transform-origin:left center;   /* ← spine axis */
+  transform:rotateY(0deg);
+  will-change:transform;
+  display:none;
+  z-index:50;
+  /* perspective applied inline via JS for accuracy */
+}
+
+/* Front face: the page being turned */
+#flipFront{
+  position:absolute;inset:0;
+  background:var(--pg);
+  overflow:hidden;
+  backface-visibility:hidden;
+  -webkit-backface-visibility:hidden;
+}
+#flipFront::after{
+  content:'';position:absolute;
+  top:0;left:0;width:32px;height:100%;
+  background:linear-gradient(to right,rgba(0,0,0,.22),transparent);
+  z-index:5;pointer-events:none;
+}
+/* Right-edge curl shadow as page lifts */
+#flipFront::before{
+  content:'';position:absolute;
+  top:0;right:0;width:30px;height:100%;
+  background:linear-gradient(to left,rgba(0,0,0,.2),transparent);
+  z-index:5;pointer-events:none;
+}
+
+/* Back face: the next page (shown once > 90°) */
+#flipBack{
+  position:absolute;inset:0;
+  background:var(--pg);
+  overflow:hidden;
+  backface-visibility:hidden;
+  -webkit-backface-visibility:hidden;
+  /* back face must be pre-rotated 180° around Y
+     AND mirrored so text reads correctly */
+  transform:rotateY(180deg);
+}
+#flipBack::after{
+  content:'';position:absolute;
+  top:0;right:0;width:32px;height:100%;   /* shadow on right now (it's mirrored) */
+  background:linear-gradient(to left,rgba(0,0,0,.22),transparent);
+  z-index:5;pointer-events:none;
+}
+
+.fscroll{
+  position:relative;z-index:1;
+  height:100%;overflow:hidden;
+}
+
+/* ── CORNER AFFORDANCE ──────────────────── */
+/*
+  A subtle triangle in the bottom-right corner.
+  When the user is near it, it glows to say "grab here".
+*/
+#cornerGrab{
+  position:absolute;
+  bottom:0;right:0;
+  width:0;height:0;
+  border-style:solid;
+  border-width:0 0 52px 52px;
+  border-color:transparent transparent rgba(123,45,38,.18) transparent;
+  z-index:60;pointer-events:none;
+  transition:border-color .2s;
+}
+#cornerGrab.hot{
+  border-color:transparent transparent rgba(123,45,38,.45) transparent;
+}
+#cornerLabel{
+  position:absolute;bottom:5px;right:6px;
+  font-size:9px;color:rgba(123,45,38,.5);
+  z-index:61;pointer-events:none;
+  font-family:'Crimson Pro',serif;letter-spacing:.5px;
+  text-transform:uppercase;
+  transition:opacity .2s;
+}
+
+/* ── COVER PAGE ─────────────────────────── */
+.cover{
+  height:100%;
+  background:linear-gradient(158deg,#7b2d26 0%,#5a1a15 46%,#38100d 100%);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:38px 28px;text-align:center;position:relative;overflow:hidden;
+}
+.cover::before{content:'';position:absolute;inset:14px;border:1px solid rgba(201,168,76,.3);border-radius:2px;pointer-events:none;}
+.cover::after{content:'';position:absolute;inset:20px;border:1px solid rgba(201,168,76,.12);border-radius:1px;pointer-events:none;}
+.cvglow{position:absolute;width:320px;height:320px;border-radius:50%;background:radial-gradient(circle,rgba(201,168,76,.07) 0%,transparent 70%);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;}
+.cvorn{font-size:20px;color:var(--gd);margin-bottom:18px;letter-spacing:10px;}
+.cvtitle{font-family:'Playfair Display',serif;font-size:42px;font-weight:700;color:var(--cream);letter-spacing:.5px;line-height:1.1;}
+.cvrule{width:52px;height:1px;background:var(--gd);margin:16px auto;position:relative;}
+.cvrule::before,.cvrule::after{content:'';position:absolute;top:-3px;width:7px;height:7px;border-radius:50%;background:var(--gd);}
+.cvrule::before{left:-9px;}.cvrule::after{right:-9px;}
+.cvsub{font-size:11px;letter-spacing:3.5px;color:var(--gd2);text-transform:uppercase;font-weight:300;}
+.cvfoot{position:absolute;bottom:28px;font-size:9px;letter-spacing:2.5px;color:rgba(201,168,76,.42);text-transform:uppercase;}
+
+/* ── BACK COVER ─────────────────────────── */
+.bcover{height:100%;background:linear-gradient(158deg,#38100d 0%,#5a1a15 100%);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:36px;text-align:center;position:relative;}
+.bcover::before{content:'';position:absolute;inset:14px;border:1px solid rgba(201,168,76,.18);border-radius:2px;}
+.bcT{font-family:'Playfair Display',serif;font-size:28px;color:var(--cream);margin-top:14px;}
+.bcS{font-size:11px;color:rgba(201,168,76,.55);letter-spacing:2px;text-transform:uppercase;margin-top:10px;}
+.bcP{font-size:16px;color:var(--gd);margin-top:20px;letter-spacing:1px;}
+
+/* ── MENU PAGE CONTENT ──────────────────── */
+.mpage{padding:20px 16px 72px;}
+.shead{display:flex;align-items:center;gap:10px;margin-bottom:16px;}
+.stitle{font-family:'Playfair Display',serif;font-size:19px;font-weight:600;color:var(--cr);white-space:nowrap;}
+.srule{flex:1;height:1px;background:linear-gradient(to right,var(--gd),transparent);}
+
+.item{display:flex;gap:11px;padding:12px 0;border-bottom:1px solid rgba(0,0,0,.07);}
+.item:last-child{border-bottom:none;}
+.fi{width:80px;height:80px;border-radius:10px;object-fit:cover;flex-shrink:0;background:var(--cream2);box-shadow:0 2px 8px rgba(0,0,0,.14);}
+.ib{flex:1;min-width:0;}
+.iname{font-family:'Playfair Display',serif;font-size:14px;font-weight:600;color:var(--ink);margin-bottom:2px;line-height:1.2;}
+.idesc{font-size:11.5px;color:var(--smoke);line-height:1.4;margin-bottom:7px;}
+.ptns{display:flex;gap:5px;flex-wrap:wrap;}
+.pb{
+  font-family:'Crimson Pro',serif;font-size:11px;font-weight:600;
+  padding:4px 9px;border-radius:5px;
+  border:1.5px solid var(--cr);color:var(--cr);background:transparent;
+  cursor:pointer;letter-spacing:.3px;
+  transition:background .12s,color .12s,transform .1s;
+}
+.pb:active{background:var(--cr);color:#fff;transform:scale(.95);}
+
+.pgn{position:absolute;bottom:10px;right:14px;font-size:10px;color:rgba(0,0,0,.18);font-style:italic;z-index:4;}
+
+/* ── BOTTOM BAR ─────────────────────────── */
+.botbar{display:flex;align-items:center;justify-content:space-between;width:100%;padding:0 4px;}
+.hintrow{display:flex;align-items:center;gap:7px;color:rgba(201,168,76,.45);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;}
+.harrow{font-size:13px;animation:hpa 2.2s ease-in-out infinite;}
+@keyframes hpa{0%,100%{opacity:.25;transform:translateX(0);}55%{opacity:.9;transform:translateX(5px);}}
+.dotrow{display:flex;gap:6px;align-items:center;}
+.dot{width:6px;height:6px;border-radius:50%;background:rgba(201,168,76,.2);transition:background .25s,transform .25s;}
+.dot.active{background:var(--gd);transform:scale(1.38);}
+
+/* ── CART FAB ───────────────────────────── */
+.fab{
+  position:fixed;bottom:20px;right:16px;
+  width:52px;height:52px;border-radius:50%;
+  background:linear-gradient(135deg,var(--cr3),var(--cr2));
+  border:none;
+  box-shadow:0 4px 18px rgba(0,0,0,.5),0 0 0 2px rgba(201,168,76,.3);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  z-index:500;transition:transform .15s;
+}
+.fab:active{transform:scale(.9);}
+.fabico{font-size:20px;}
+.fabbadge{
+  position:absolute;top:2px;right:2px;
+  background:var(--gd);color:var(--ink);
+  font-size:9px;font-weight:700;
+  width:16px;height:16px;border-radius:50%;
+  display:none;align-items:center;justify-content:center;
+  font-family:'Crimson Pro',serif;
+}
+
+/* ── CART DRAWER ────────────────────────── */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:600;opacity:0;pointer-events:none;transition:opacity .3s;}
+.overlay.open{opacity:1;pointer-events:all;}
+.drawer{
+  position:fixed;bottom:0;left:0;right:0;
+  max-width:420px;margin:0 auto;
+  background:#1a1208;border-radius:18px 18px 0 0;
+  border-top:1px solid rgba(201,168,76,.2);
+  z-index:601;transform:translateY(100%);
+  transition:transform .35s cubic-bezier(.32,.72,0,1);
+  max-height:75vh;display:flex;flex-direction:column;
+}
+.drawer.open{transform:translateY(0);}
+.drawHandle{width:36px;height:4px;background:rgba(201,168,76,.3);border-radius:2px;margin:10px auto 0;}
+.drawHead{padding:13px 20px 10px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,.06);}
+.drawTitle{font-family:'Playfair Display',serif;font-size:18px;color:var(--cream);}
+.drawX{background:rgba(255,255,255,.08);border:none;color:rgba(255,255,255,.5);font-size:15px;width:28px;height:28px;border-radius:50%;cursor:pointer;}
+.drawBody{flex:1;overflow-y:auto;padding:6px 20px;scrollbar-width:none;}
+.drawBody::-webkit-scrollbar{display:none;}
+.cartempty{text-align:center;padding:28px 0;color:rgba(201,168,76,.3);font-size:13px;letter-spacing:1px;}
+.citem{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05);}
+.citem:last-child{border-bottom:none;}
+.cinfo{flex:1;}
+.cname{font-size:13px;color:var(--cream);font-weight:600;font-family:'Playfair Display',serif;}
+.csize{font-size:10px;color:rgba(201,168,76,.55);letter-spacing:.5px;text-transform:uppercase;}
+.cprice{font-size:14px;font-weight:600;color:var(--gd);font-family:'Playfair Display',serif;white-space:nowrap;}
+.crmbtn{background:rgba(200,50,50,.15);border:1px solid rgba(200,50,50,.25);color:#d06060;border-radius:4px;padding:3px 7px;font-size:10px;cursor:pointer;}
+.drawFoot{padding:12px 20px 22px;border-top:1px solid rgba(255,255,255,.06);}
+.totalrow{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;}
+.totallabel{font-size:12px;color:rgba(255,255,255,.4);letter-spacing:1px;text-transform:uppercase;}
+.totalval{font-family:'Playfair Display',serif;font-size:24px;color:var(--gd);}
+.orderbtn{width:100%;padding:13px;background:linear-gradient(135deg,var(--gd) 0%,var(--gd3) 100%);color:var(--ink);border:none;border-radius:10px;font-family:'Playfair Display',serif;font-size:15px;font-weight:600;letter-spacing:1px;cursor:pointer;transition:opacity .15s;}
+.orderbtn:active{opacity:.8;}
+.clearbtn{width:100%;margin-top:7px;padding:9px;background:transparent;border:1px solid rgba(200,50,50,.28);color:#c06060;border-radius:10px;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;cursor:pointer;}
+
+/* ── TOAST ──────────────────────────────── */
+.toast{
+  position:fixed;top:14px;left:50%;
+  transform:translateX(-50%) translateY(-70px);
+  background:var(--cr);color:#fff;
+  padding:9px 20px;border-radius:22px;
+  font-size:13px;font-weight:600;
+  z-index:9999;opacity:0;
+  transition:transform .3s cubic-bezier(.32,.72,0,1),opacity .3s;
+  white-space:nowrap;pointer-events:none;
+  box-shadow:0 4px 16px rgba(0,0,0,.4);
+  font-family:'Crimson Pro',serif;
+}
+.toast.show{transform:translateX(-50%) translateY(0);opacity:1;}
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="book" id="book">
+    <!-- Static page stack — pages sit here, JS controls z-index -->
+    <div id="pageWrap"></div>
+
+    <!--
+      THE FLIP PANEL
+      Contains two faces: front (page being turned) + back (next page).
+      transform-origin: left center  — rotates around the LEFT spine.
+      rotateY(0)    = page lying flat, facing you
+      rotateY(-180) = page fully turned, lying flat on the left
+    -->
+    <div id="flipPanel">
+      <div id="flipFront"><div class="fscroll" id="flipFrontContent"></div></div>
+      <div id="flipBack" ><div class="fscroll" id="flipBackContent" ></div></div>
+    </div>
+
+    <!-- Corner grab affordance -->
+    <div id="cornerGrab"></div>
+    <div id="cornerLabel">turn</div>
+  </div>
+
+  <div class="botbar">
+    <div class="hintrow">
+      <span class="harrow">&#8594;</span>
+      <span id="hintText">Drag bottom-right corner to turn</span>
+    </div>
+    <div class="dotrow" id="dotRow"></div>
+  </div>
+</div>
+
+<!-- Cart FAB -->
+<button class="fab" onclick="openCart()">
+  <span class="fabico">&#128722;</span>
+  <span class="fabbadge" id="fabBadge">0</span>
+</button>
+
+<!-- Cart Drawer -->
+<div class="overlay" id="overlay" onclick="closeCart()"></div>
+<div class="drawer" id="drawer">
+  <div class="drawHandle"></div>
+  <div class="drawHead">
+    <span class="drawTitle">Your Order</span>
+    <button class="drawX" onclick="closeCart()">&#x2715;</button>
+  </div>
+  <div class="drawBody">
+    <div class="cartempty" id="cartEmpty">No items yet</div>
+    <div id="cartList"></div>
+  </div>
+  <div class="drawFoot">
+    <div class="totalrow">
+      <span class="totallabel">Total</span>
+      <span class="totalval" id="cartTotal">Rs. 0</span>
+    </div>
+    <button class="orderbtn" onclick="placeOrder()">Place Order</button>
+    <button class="clearbtn" onclick="clearCart()">Clear All</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   MENU DATA
+═══════════════════════════════════════════════════ */
+const PAGES = [
+  { t: 'cover' },
+
+  { t: 'menu', s: 'Kottu Roti', items: [
+    { n: 'Chicken Kottu',  d: 'Shredded godamba roti wok-tossed with spiced chicken, leeks & egg',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/Kottu_Roti_Sri_Lanka.jpg/320px-Kottu_Roti_Sri_Lanka.jpg', p: [650,850,1050] },
+    { n: 'Egg Kottu',      d: 'Classic kottu loaded with fluffy egg, leeks & cracked black pepper',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/15/Egg_kottu_roti.jpg/320px-Egg_kottu_roti.jpg', p: [550,750,950] },
+    { n: 'Cheese Kottu',   d: 'Indulgent kottu melted with gooey cheese, onions & chilli flakes',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/2/22/Kottu_Roti_Sri_Lanka.jpg/320px-Kottu_Roti_Sri_Lanka.jpg', p: [700,900,1100] },
+  ]},
+
+  { t: 'menu', s: 'Nasi Goreng', items: [
+    { n: 'Chicken Nasi Goreng',  d: 'Indonesian spiced fried rice with chicken, sunny-side egg & crackers',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/cf/Nasi_goreng_Pattaya.JPG/320px-Nasi_goreng_Pattaya.JPG', p: [600,800,1000] },
+    { n: 'Prawn Nasi Goreng',    d: 'Tiger prawns in kecap manis wok-charred rice with sambal',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9d/Shrimp_fried_rice.jpg/320px-Shrimp_fried_rice.jpg', p: [800,1000,1250] },
+    { n: 'Special Nasi Goreng',  d: 'Chicken, prawn & egg with sweet soy & crispy shallots',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Sinhalese_fried_rice.jpg/320px-Sinhalese_fried_rice.jpg', p: [750,950,1200] },
+  ]},
+
+  { t: 'menu', s: 'Fried Rice', items: [
+    { n: 'Sri Lankan Fried Rice', d: 'Aromatic wok rice with chicken, leeks, egg & curry leaves',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/Sinhalese_fried_rice.jpg/320px-Sinhalese_fried_rice.jpg', p: [600,800,1000] },
+    { n: 'Mongolian Fried Rice',  d: 'Rich brown-sauce rice with shredded beef, spring onion & sesame',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0f/Mongolian_beef_closeup.jpg/320px-Mongolian_beef_closeup.jpg', p: [750,950,1200] },
+    { n: 'Prawn Fried Rice',      d: 'Succulent tiger prawns stir-fried with jasmine rice & vegetables',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9d/Shrimp_fried_rice.jpg/320px-Shrimp_fried_rice.jpg', p: [800,1000,1250] },
+  ]},
+
+  { t: 'menu', s: 'Noodles', items: [
+    { n: 'Chicken Noodles',   d: 'Stir-fried egg noodles with tender chicken strips & oyster sauce',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/Noodles_2.jpg/320px-Noodles_2.jpg', p: [550,750,950] },
+    { n: 'Singapore Noodles', d: 'Thin vermicelli stir-fried with curry powder, chicken & prawn',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/d/d1/Singapore_noodles.jpg/320px-Singapore_noodles.jpg', p: [600,800,1000] },
+    { n: 'Seafood Noodles',   d: 'Prawns & squid tossed with silky noodles in XO chilli sauce',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Noodles_in_a_restaurant.jpg/320px-Noodles_in_a_restaurant.jpg', p: [800,1000,1300] },
+  ]},
+
+  { t: 'menu', s: 'Devilled Dishes', items: [
+    { n: 'Devilled Chicken', d: 'Sri Lankan signature — spicy, sweet & tangy wok-fried chicken',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/Devilled_chicken.jpg/320px-Devilled_chicken.jpg', p: [700,900,1200] },
+    { n: 'Devilled Prawns',  d: 'Fiery tiger prawns in rich tomato, chilli & capsicum sauce',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Prawn_curry.jpg/320px-Prawn_curry.jpg', p: [900,1200,1500] },
+    { n: 'Devilled Pork',    d: 'Crispy pork belly pieces in hot Sri Lankan devilled sauce',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/Devilled_chicken.jpg/320px-Devilled_chicken.jpg', p: [700,900,1150] },
+  ]},
+
+  { t: 'menu', s: 'Curries & Rice', items: [
+    { n: 'Chicken Curry',     d: 'Slow-cooked in coconut milk with pandan & curry leaves',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Prawn_curry.jpg/320px-Prawn_curry.jpg', p: [700,900,1200] },
+    { n: 'Dhal Curry',        d: 'Creamy red lentils tempered with mustard, onion & chilli',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Prawn_curry.jpg/320px-Prawn_curry.jpg', p: [400,600,800] },
+    { n: 'Fish Ambul Thiyal', d: 'Tangy dry-fried fish curry with goraka — a Sri Lankan classic',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b3/Prawn_curry.jpg/320px-Prawn_curry.jpg', p: [800,1000,1300] },
+  ]},
+
+  { t: 'menu', s: 'Drinks', items: [
+    { n: 'Mango Lassi',     d: 'Chilled alphonso mango blended with creamy natural yoghurt',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/37/Mango_Lassi.jpg/320px-Mango_Lassi.jpg', p: [300,400,500] },
+    { n: 'Ceylon Iced Tea', d: 'Premium loose-leaf Ceylon black tea, chilled & lightly sweetened',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9d/Shrimp_fried_rice.jpg/320px-Shrimp_fried_rice.jpg', p: [250,350,450] },
+    { n: 'Fresh Lime Soda', d: 'Freshly squeezed lime with chilled soda water & pinch of salt',
+      i: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/9d/Shrimp_fried_rice.jpg/320px-Shrimp_fried_rice.jpg', p: [200,300,400] },
+  ]},
+
+  { t: 'backcover' },
+];
+
+const N = PAGES.length; // total pages
+
+/* ═══════════════════════════════════════════════════
+   BUILD PAGE INNER HTML
+═══════════════════════════════════════════════════ */
+function buildHTML(data, pgNum) {
+  if (data.t === 'cover') return `
+    <div class="cover">
+      <div class="cvglow"></div>
+      <div class="cvorn">✦ ✦ ✦</div>
+      <div class="cvtitle">Our Menu</div>
+      <div class="cvrule"></div>
+      <div class="cvsub">Fine Sri Lankan Cuisine</div>
+      <div class="cvfoot">Est. 2005 · Colombo</div>
+    </div>`;
+
+  if (data.t === 'backcover') return `
+    <div class="bcover">
+      <div class="cvorn" style="color:var(--gd)">✦</div>
+      <div class="bcT">Thank You</div>
+      <div class="bcS">We hope to see you again</div>
+      <div class="bcP">+94 11 234 5678</div>
+    </div>`;
+
+  const rs = n => 'Rs. ' + n.toLocaleString();
+  const esc = s => s.replace(/'/g, "\\'");
+  return `
+    <div class="pscroll">
+      <div class="mpage">
+        <div class="shead">
+          <span class="stitle">${data.s}</span>
+          <div class="srule"></div>
+        </div>
+        ${data.items.map(it => `
+          <div class="item">
+            <img class="fi" src="${it.i}" alt="${it.n}" loading="lazy"
+              onerror="this.src='';this.style.background='#ddd'">
+            <div class="ib">
+              <div class="iname">${it.n}</div>
+              <div class="idesc">${it.d}</div>
+              <div class="ptns">
+                <button class="pb" onclick="addItem('${esc(it.n)}','Small',${it.p[0]})">S · ${rs(it.p[0])}</button>
+                <button class="pb" onclick="addItem('${esc(it.n)}','Medium',${it.p[1]})">M · ${rs(it.p[1])}</button>
+                <button class="pb" onclick="addItem('${esc(it.n)}','Large',${it.p[2]})">L · ${rs(it.p[2])}</button>
+              </div>
+            </div>
+          </div>`).join('')}
+      </div>
+    </div>
+    ${pgNum ? `<span class="pgn">${pgNum}</span>` : ''}`;
+}
+
+/* ═══════════════════════════════════════════════════
+   CREATE ALL STATIC PAGE ELEMENTS
+═══════════════════════════════════════════════════ */
+const pageWrap = document.getElementById('pageWrap');
+PAGES.forEach((data, i) => {
+  const el = document.createElement('div');
+  el.className = 'page';
+  el.id = 'page' + i;
+  el.innerHTML = buildHTML(data, i > 0 && i < N - 1 ? i : '');
+  pageWrap.appendChild(el);
+});
+
+/* ═══════════════════════════════════════════════════
+   PAGE FLIP ENGINE
+
+   State:
+     cur  = index of the page currently showing on top
+   
+   Flip direction:
+     FORWARD  (cur → cur+1):
+       flipPanel rotates 0 → -180 around left axis.
+       Front face shows page[cur].
+       Back face shows page[cur+1].
+       After complete: cur++, reset panel.
+
+     BACKWARD (cur → cur-1):
+       flipPanel rotates -180 → 0.
+       Front face shows page[cur-1].  (it comes back into view)
+       Back face shows page[cur].
+       After complete: cur--, reset panel.
+
+   The flip panel sits above the static stack.
+   While flipping, the source static page is hidden (opacity 0)
+   so only the flip panel's front face is visible.
+═══════════════════════════════════════════════════ */
+
+let cur = 0;          // current visible page index
+let busy = false;     // animation in progress
+let dragging = false;
+let dragFwd = null;   // true = forward, false = backward
+let touchStartX = 0, touchStartY = 0;
+let touchCurX   = 0, touchCurY   = 0;
+let currentAngle = 0; // current rotateY angle of flipPanel (0 = flat, -180 = fully turned)
+
+const book        = document.getElementById('book');
+const flipPanel   = document.getElementById('flipPanel');
+const flipFront   = document.getElementById('flipFront');
+const flipBack    = document.getElementById('flipBack');
+const flipFrontC  = document.getElementById('flipFrontContent');
+const flipBackC   = document.getElementById('flipBackContent');
+const cornerGrab  = document.getElementById('cornerGrab');
+
+/* Set the 3D angle of the flip panel.
+   angle: 0 = flat (face-up), -180 = fully flipped (face-down to left) */
+function applyAngle(angle) {
+  currentAngle = angle;
+  // perspective on the parent keeps it consistent
+  flipPanel.style.transform = `perspective(1400px) rotateY(${angle}deg)`;
+}
+
+/* Restack static pages after a flip completes */
+function restack() {
+  PAGES.forEach((_, i) => {
+    const el = document.getElementById('page' + i);
+    if (!el) return;
+    if (i < cur) {
+      // already-read pages sit below
+      el.style.zIndex = i + 1;
+      el.style.display = 'block';
+      el.style.opacity = '1';
+    } else if (i === cur) {
+      // current top page
+      el.style.zIndex = N + 2;
+      el.style.display = 'block';
+      el.style.opacity = '1';
+    } else {
+      // upcoming pages stacked below current
+      el.style.zIndex = N + 1 - (i - cur);
+      el.style.display = i <= cur + 3 ? 'block' : 'none';
+      el.style.opacity = '1';
+    }
+  });
+  updateDots();
+  updateHint();
+}
+
+/* Show the flip panel, populate its faces, hide the source static page */
+function beginFlip(forward) {
+  dragFwd = forward;
+
+  const frontPageIdx = forward ? cur     : cur - 1;  // page that peels away
+  const backPageIdx  = forward ? cur + 1 : cur;      // page revealed on back
+
+  flipFrontC.innerHTML = buildHTML(PAGES[frontPageIdx],
+    frontPageIdx > 0 && frontPageIdx < N - 1 ? frontPageIdx : '');
+  flipBackC.innerHTML  = buildHTML(PAGES[backPageIdx],
+    backPageIdx  > 0 && backPageIdx  < N - 1 ? backPageIdx  : '');
+
+  // Position panel above everything
+  flipPanel.style.display  = 'block';
+  flipPanel.style.zIndex   = '60';
+
+  // Start angle: 0 for forward, -180 for backward
+  applyAngle(forward ? 0 : -180);
+
+  // Hide the static page that the flip panel is covering
+  const srcEl = document.getElementById('page' + frontPageIdx);
+  if (srcEl) srcEl.style.opacity = '0';
+}
+
+/* Hide the flip panel and restore static pages */
+function endFlip() {
+  flipPanel.style.display = 'none';
+  applyAngle(0);
+  restack(); // restores all opacities and z-indices
+}
+
+/* Easing: ease-in-out quad */
+const easeInOut = t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+
+/* Animate from current angle to target angle, then call done() */
+function animateTo(fromAngle, toAngle, done) {
+  busy = true;
+  const duration = 120 + Math.abs(toAngle - fromAngle) / 180 * 340; // faster for small remaining
+  const t0 = performance.now();
+
+  (function tick(now) {
+    const t = Math.min(1, (now - t0) / duration);
+    applyAngle(fromAngle + (toAngle - fromAngle) * easeInOut(t));
+    if (t < 1) {
+      requestAnimationFrame(tick);
+    } else {
+      busy = false;
+      done();
+    }
+  })(t0);
+}
+
+/* ── TOUCH / MOUSE HANDLING ──────────────────────── */
+
+/*
+  Hot zone: bottom-right 40% × 40% of the book = grab to go forward
+            bottom-left  30% × 40%             = grab to go backward
+*/
+function getZone(clientX, clientY) {
+  const r = book.getBoundingClientRect();
+  const rx = clientX - r.left;
+  const ry = clientY - r.top;
+  const bw = r.width, bh = r.height;
+  if (rx > bw * 0.55 && ry > bh * 0.55 && cur < N - 1) return 'fwd';
+  if (rx < bw * 0.45 && ry > bh * 0.55 && cur > 0)    return 'bwd';
+  return null;
+}
+
+/*
+  Map current touch position to a flip angle (0 → -180).
+  As the finger moves from the right side toward the left,
+  the angle goes from 0 toward -180.
+*/
+function touchToAngle(clientX) {
+  const r  = book.getBoundingClientRect();
+  const dx = clientX - r.left; // 0 = left edge, bw = right edge
+  const bw = r.width;
+  // when finger is at right (bw) → angle = 0
+  // when finger is at left  (0)  → angle = -180
+  const ratio = 1 - Math.max(0, Math.min(1, dx / bw));
+  return -ratio * 180;
+}
+
+function onPointerDown(clientX, clientY) {
+  if (busy) return;
+  const zone = getZone(clientX, clientY);
+  if (!zone) return;
+
+  dragging = true;
+  touchStartX = touchCurX = clientX;
+  touchStartY = touchCurY = clientY;
+
+  beginFlip(zone === 'fwd');
+}
+
+function onPointerMove(clientX, clientY) {
+  if (!dragging || busy) return;
+  touchCurX = clientX;
+  touchCurY = clientY;
+
+  let angle = touchToAngle(clientX);
+
+  if (dragFwd) {
+    // Forward: 0 → -180. Clamp so it can't go positive or past -180.
+    angle = Math.max(-180, Math.min(0, angle));
+  } else {
+    // Backward: started at -180, finger moves right toward 0.
+    // Map rightward movement back toward 0.
+    const r  = book.getBoundingClientRect();
+    const dx = clientX - touchStartX; // positive = moved right
+    const bw = r.width;
+    const ratio = Math.max(0, Math.min(1, dx / bw));
+    angle = -180 + ratio * 180;
+  }
+
+  applyAngle(angle);
+}
+
+function onPointerUp() {
+  if (!dragging) return;
+  dragging = false;
+
+  const angle = currentAngle; // where the finger released
+
+  if (dragFwd) {
+    // Commit if turned past -60° (33%), otherwise snap back
+    if (angle < -60) {
+      animateTo(angle, -180, () => {
+        cur++;
+        endFlip();
+      });
+    } else {
+      animateTo(angle, 0, () => endFlip());
+    }
+  } else {
+    // Backward: commit if returned past -120° (33% of the way back), else snap back
+    if (angle > -120) {
+      animateTo(angle, 0, () => {
+        cur--;
+        endFlip();
+      });
+    } else {
+      animateTo(angle, -180, () => endFlip());
+    }
+  }
+}
+
+/* Touch events */
+book.addEventListener('touchstart', e => {
+  const t = e.touches[0];
+  onPointerDown(t.clientX, t.clientY);
+}, { passive: true });
+
+book.addEventListener('touchmove', e => {
+  if (dragging) e.preventDefault();
+  const t = e.touches[0];
+  onPointerMove(t.clientX, t.clientY);
+}, { passive: false });
+
+book.addEventListener('touchend',   () => onPointerUp(), { passive: true });
+book.addEventListener('touchcancel',() => onPointerUp(), { passive: true });
+
+/* Mouse events (desktop fallback) */
+let mouseDown = false;
+book.addEventListener('mousedown', e => {
+  mouseDown = true;
+  onPointerDown(e.clientX, e.clientY);
+});
+window.addEventListener('mousemove', e => {
+  if (mouseDown) onPointerMove(e.clientX, e.clientY);
+});
+window.addEventListener('mouseup', () => {
+  if (mouseDown) { mouseDown = false; onPointerUp(); }
+});
+
+/* Corner affordance glow on hover */
+book.addEventListener('mousemove', e => {
+  const zone = getZone(e.clientX, e.clientY);
+  cornerGrab.classList.toggle('hot', zone === 'fwd');
+  document.getElementById('cornerLabel').style.opacity = zone === 'fwd' ? '0.7' : '0';
+});
+book.addEventListener('mouseleave', () => {
+  cornerGrab.classList.remove('hot');
+  document.getElementById('cornerLabel').style.opacity = '0';
+});
+
+/* ── DOTS & HINT ──────────────────────────────────── */
+function updateDots() {
+  const row = document.getElementById('dotRow');
+  row.innerHTML = PAGES.map((_, i) =>
+    `<div class="dot${i === cur ? ' active' : ''}"></div>`
+  ).join('');
+}
+
+function updateHint() {
+  const el = document.getElementById('hintText');
+  if (cur === 0)     el.textContent = 'Drag bottom-right corner to turn';
+  else if (cur === N - 1) el.textContent = 'Drag bottom-left to go back';
+  else               el.textContent = 'Drag corners to turn pages';
+}
+
+/* ═══════════════════════════════════════════════════
+   CART
+═══════════════════════════════════════════════════ */
+let cart = [], uid = 0;
+
+function addItem(name, size, price) {
+  cart.push({ id: uid++, name, size, price });
+  renderCart();
+  showToast(name + ' added');
+}
+
+function removeItem(id) {
+  cart = cart.filter(i => i.id !== id);
+  renderCart();
+}
+
+function clearCart() {
+  cart = [];
+  renderCart();
+}
+
+function placeOrder() {
+  if (!cart.length) { showToast('Cart is empty!'); return; }
+  showToast('Order placed! Thank you ✦');
+  setTimeout(() => { clearCart(); closeCart(); }, 1400);
+}
+
+function renderCart() {
+  const list  = document.getElementById('cartList');
+  const empty = document.getElementById('cartEmpty');
+  const badge = document.getElementById('fabBadge');
+  const total = document.getElementById('cartTotal');
+  empty.style.display = cart.length ? 'none' : 'block';
+  badge.style.display = cart.length ? 'flex' : 'none';
+  badge.textContent   = cart.length;
+  const rs = n => 'Rs. ' + n.toLocaleString();
+  list.innerHTML = cart.map(i => `
+    <div class="citem">
+      <div class="cinfo">
+        <div class="cname">${i.name}</div>
+        <div class="csize">${i.size}</div>
+      </div>
+      <span class="cprice">${rs(i.price)}</span>
+      <button class="crmbtn" onclick="removeItem(${i.id})">✕</button>
+    </div>`).join('');
+  total.textContent = rs(cart.reduce((s, i) => s + i.price, 0));
+}
+
+function openCart()  { document.getElementById('overlay').classList.add('open'); document.getElementById('drawer').classList.add('open'); }
+function closeCart() { document.getElementById('overlay').classList.remove('open'); document.getElementById('drawer').classList.remove('open'); }
+
+/* ── TOAST ──────────────────────────────────────── */
+let toastTimer;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+/* ── INIT ──────────────────────────────────────── */
+restack();
+</script>
+</body>
+</html>
